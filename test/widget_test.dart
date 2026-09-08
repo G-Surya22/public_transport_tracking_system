@@ -72,4 +72,84 @@ void main() {
     expect(find.text('Passenger'), findsOneWidget);
     expect(find.text('Search public transport services'), findsOneWidget);
   });
+
+  test('finds a valid route when source appears before destination', () {
+    final routes = {
+      'route11': {
+        'halts': {
+          'halt1': {'name': 'S.Kota'},
+          'halt2': {'name': 'Boddam'},
+          'halt3': {'name': 'Kothavalasa'},
+          'halt4': {'name': 'Vizianagaram'},
+        },
+      },
+      'route12': {
+        'halts': {
+          'halt1': {'name': 'S.Kota'},
+          'halt2': {'name': 'Jami'},
+          'halt3': {'name': 'Bheemasingi'},
+          'halt4': {'name': 'Vizianagaram'},
+        },
+      },
+    };
+
+    final matches = findMatchingRoutes(
+      source: 'S.Kota',
+      destination: 'Vizianagaram',
+      routesData: routes,
+    );
+
+    expect(matches.length, 2);
+    expect(matches.first.routeName, 'route11');
+    expect(matches.first.path, ['S.Kota', 'Boddam', 'Kothavalasa', 'Vizianagaram']);
+    expect(matches.last.routeName, 'route12');
+    expect(matches.last.path, ['S.Kota', 'Jami', 'Bheemasingi', 'Vizianagaram']);
+  });
+
+  test('returns no route when destination appears before source', () {
+    final routes = {
+      'route7': {
+        'halts': {
+          'halt1': {'name': 'Vizianagaram'},
+          'halt2': {'name': 'Ayinada Junction'},
+          'halt3': {'name': 'S.Kota'},
+        },
+      },
+    };
+
+    final matches = findMatchingRoutes(
+      source: 'S.Kota',
+      destination: 'Vizianagaram',
+      routesData: routes,
+    );
+
+    expect(matches, isEmpty);
+  });
+
+  test('orders halts by numeric index even when map insertion order is shuffled', () {
+    final routes = {
+      'route15': {
+        'halts': {
+          'halt10': {'name': 'Midtown'},
+          'halt2': {'name': 'Jami'},
+          'halt1': {'name': 'S.Kota'},
+          'halt15': {'name': 'Vizianagaram'},
+          'halt3': {'name': 'Bheemasingi'},
+          'halt4': {'name': 'Ayinada Junction'},
+        },
+      },
+    };
+
+    final matches = findMatchingRoutes(
+      source: 'S.Kota',
+      destination: 'Vizianagaram',
+      routesData: routes,
+    );
+
+    expect(matches.length, 1);
+    expect(
+      matches.first.path,
+      ['S.Kota', 'Jami', 'Bheemasingi', 'Ayinada Junction', 'Midtown', 'Vizianagaram'],
+    );
+  });
 }

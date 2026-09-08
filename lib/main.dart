@@ -1,12 +1,21 @@
 import 'dart:async';
-
+import 'services/sample.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'firebase_options.dart';
 
 const navyBlue = Color(0xFF092A4A);
 const skyBlue = Color(0xFF4DB7E9);
 const paleBlue = Color(0xFFEAF7FD);
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const PttsApp());
 }
 
@@ -156,6 +165,239 @@ class PttsLogo extends StatelessWidget {
   }
 }
 
+class RouteMatch {
+  final String routeName;
+  final String source;
+  final String destination;
+  final List<String> path;
+
+  const RouteMatch({
+    required this.routeName,
+    required this.source,
+    required this.destination,
+    required this.path,
+  });
+}
+
+int? _haltIndexFromKey(String key) {
+  final match = RegExp(r'(\d+)').firstMatch(key);
+  if (match == null) return null;
+  return int.tryParse(match.group(1) ?? '');
+}
+
+List<RouteMatch> findMatchingRoutes({
+  required String source,
+  required String destination,
+  required Map<String, dynamic> routesData,
+}) {
+  final normalizedSource = source.trim();
+  final normalizedDestination = destination.trim();
+
+  if (normalizedSource.isEmpty || normalizedDestination.isEmpty) {
+    return const [];
+  }
+
+  final sourceKey = normalizedSource.toLowerCase();
+  final destinationKey = normalizedDestination.toLowerCase();
+  final matches = <RouteMatch>[];
+
+  routesData.forEach((routeName, routeData) {
+    if (routeData is! Map) return;
+
+    final haltsMap = routeData['halts'];
+    if (haltsMap is! Map) return;
+
+    final orderedHaltEntries = haltsMap.entries.toList()
+      ..sort((a, b) {
+        final aIndex = _haltIndexFromKey(a.key.toString());
+        final bIndex = _haltIndexFromKey(b.key.toString());
+
+        if (aIndex == null && bIndex == null) {
+          return a.key.toString().compareTo(b.key.toString());
+        }
+        if (aIndex == null) return 1;
+        if (bIndex == null) return -1;
+        return aIndex.compareTo(bIndex);
+      });
+
+    final haltNames = <String>[];
+    for (final entry in orderedHaltEntries) {
+      final haltValue = entry.value;
+      if (haltValue is! Map) continue;
+      final haltName = (haltValue['name'] ?? '').toString().trim();
+      if (haltName.isNotEmpty) {
+        haltNames.add(haltName);
+      }
+    }
+
+    if (haltNames.isEmpty) return;
+
+    final normalizedHaltNames = haltNames.map((name) => name.toLowerCase()).toList();
+    final sourceIndex = normalizedHaltNames.indexOf(sourceKey);
+    final destinationIndex = normalizedHaltNames.indexOf(destinationKey);
+
+    final sameRoute = sourceIndex != -1 && destinationIndex != -1;
+    final validOrder = sameRoute && sourceIndex < destinationIndex;
+
+    if (validOrder) {
+      matches.add(
+        RouteMatch(
+          routeName: routeName,
+          source: normalizedSource,
+          destination: normalizedDestination,
+          path: haltNames.sublist(sourceIndex, destinationIndex + 1),
+        ),
+      );
+    }
+  });
+
+  return matches;
+}
+
+class SearchResultScreen extends StatelessWidget {
+  final String source;
+  final String destination;
+  final List<RouteMatch> matches;
+
+  const SearchResultScreen({
+    super.key,
+    required this.source,
+    required this.destination,
+    required this.matches,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF7FBFD),
+        elevation: 0,
+        title: const Text(
+          'Search results',
+          style: TextStyle(
+            color: navyBlue,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: navyBlue),
+      ),
+      body: matches.isEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.search_off_rounded,
+                      size: 72,
+                      color: skyBlue,
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'No routes found',
+                      style: TextStyle(
+                        color: navyBlue,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No route contains $source before $destination.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF617887),
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(20),
+              itemCount: matches.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final match = matches[index];
+                return Card(
+                  elevation: 0,
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: const BorderSide(color: Color(0xFFDCEAF2)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: paleBlue,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                match.routeName.toUpperCase(),
+                                style: const TextStyle(
+                                  color: navyBlue,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            const Icon(
+                              Icons.route_rounded,
+                              color: skyBlue,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '$source → $destination',
+                          style: const TextStyle(
+                            color: navyBlue,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: match.path
+                              .map(
+                                (stop) => Chip(
+                                  label: Text(stop),
+                                  backgroundColor: paleBlue,
+                                  labelStyle: const TextStyle(
+                                    color: navyBlue,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  side: BorderSide.none,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -176,18 +418,58 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  void _search() {
+  Future<void> _search() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final source = _sourceController.text.trim();
+    final destination = _destinationController.text.trim();
+
     FocusScope.of(context).unfocus();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Searching routes from ${_sourceController.text.trim()} '
-          'to ${_destinationController.text.trim()}',
+          'Searching routes from $source to $destination',
         ),
         backgroundColor: navyBlue,
       ),
     );
+
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref().child('routes').get();
+      final rawData = snapshot.value;
+      final routesData = rawData is Map ? Map<String, dynamic>.from(rawData) : const <String, dynamic>{};
+      final matches = findMatchingRoutes(
+        source: source,
+        destination: destination,
+        routesData: routesData,
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SearchResultScreen(
+            source: source,
+            destination: destination,
+            matches: matches,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SearchResultScreen(
+            source: source,
+            destination: destination,
+            matches: const [],
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -236,7 +518,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 Switch.adaptive(
                   value: _isCrewMode,
                   onChanged: (value) => setState(() => _isCrewMode = value),
-                  activeColor: skyBlue,
+                  activeThumbColor: skyBlue,
                   activeTrackColor: paleBlue,
                   inactiveThumbColor: navyBlue,
                   inactiveTrackColor: const Color(0xFFD7E4EA),
@@ -373,9 +655,11 @@ class _SearchScreenState extends State<SearchScreen> {
 }
 
 class CrewScreen extends StatelessWidget {
+  
   const CrewScreen({super.key});
-
+  
   @override
+  
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
