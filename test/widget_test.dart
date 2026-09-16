@@ -9,11 +9,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ptts/main.dart';
+import 'package:ptts/services/halt_geofence_service.dart';
 
 void main() {
-  testWidgets('shows loading logo then transport search form', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('shows passenger search screen after loading', (WidgetTester tester) async {
     await tester.pumpWidget(const PttsApp());
 
     expect(find.text('PTTS'), findsOneWidget);
@@ -28,49 +27,35 @@ void main() {
     expect(find.text('Search'), findsOneWidget);
   });
 
-  testWidgets('validates and submits locations', (WidgetTester tester) async {
+  testWidgets('navigates to registration form from crew login', (WidgetTester tester) async {
     await tester.pumpWidget(const PttsApp());
     await tester.pump(const Duration(milliseconds: 2700));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Search'));
-    await tester.pump();
-    expect(find.text('Enter your starting location'), findsOneWidget);
-    expect(find.text('Enter your destination'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextFormField).at(0), 'Central Station');
-    await tester.enterText(find.byType(TextFormField).at(1), 'City Museum');
-    await tester.tap(find.text('Search'));
-    await tester.pump();
+    await tester.tap(find.text('New Crew? Register Here'));
+    await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('Searching routes from Central Station'),
-      findsOneWidget,
-    );
+    expect(find.text('Create Crew Account'), findsNWidgets(2));
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Password'), findsOneWidget);
   });
 
-  testWidgets('switches between passenger and crew modes', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('crew mode requires login before access', (WidgetTester tester) async {
     await tester.pumpWidget(const PttsApp());
     await tester.pump(const Duration(milliseconds: 2700));
     await tester.pumpAndSettle();
 
-    expect(find.text('Passenger'), findsOneWidget);
-    expect(find.text('Search public transport services'), findsOneWidget);
-
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
 
-    expect(find.text('Crew'), findsOneWidget);
-    expect(find.text('Start journey'), findsNWidgets(2));
-    expect(find.text('Search public transport services'), findsNothing);
-
-    await tester.tap(find.byType(Switch));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Passenger'), findsOneWidget);
-    expect(find.text('Search public transport services'), findsOneWidget);
+    expect(find.text('Crew Login'), findsNWidgets(2));
+    expect(find.text('Email ID'), findsOneWidget);
+    expect(find.text('Password'), findsOneWidget);
+    expect(find.text('New Crew? Register Here'), findsOneWidget);
   });
 
   test('finds a valid route when source appears before destination', () {
@@ -104,6 +89,79 @@ void main() {
     expect(matches.first.path, ['S.Kota', 'Boddam', 'Kothavalasa', 'Vizianagaram']);
     expect(matches.last.routeName, 'route12');
     expect(matches.last.path, ['S.Kota', 'Jami', 'Bheemasingi', 'Vizianagaram']);
+  });
+
+  test('extracts unique endpoint suggestions from route data', () {
+    final routes = {
+      'route11': {
+        'source': 'S.Kota',
+        'destination': 'Vizianagaram',
+      },
+      'route12': {
+        'source': 'S.Kota',
+        'destination': 'Vizianagaram',
+      },
+      'route13': {
+        'source': 'Vizianagaram',
+        'destination': 'Visakhapatnam',
+      },
+    };
+
+    expect(
+      endpointSuggestionsFromRoutes(routesData: routes, source: true),
+      ['S.Kota', 'Vizianagaram'],
+    );
+    expect(
+      endpointSuggestionsFromRoutes(routesData: routes, source: false),
+      ['Visakhapatnam', 'Vizianagaram'],
+    );
+  });
+
+  test('geofence advances only the next halt and stops at route length', () {
+    const service = HaltGeofenceService();
+    const halts = [
+      HaltPoint(name: 'Source', latitude: 18.100, longitude: 83.100),
+      HaltPoint(name: 'Next', latitude: 18.105, longitude: 83.105),
+    ];
+
+    final first = service.evaluate(
+      currentLatitude: 18.105,
+      currentLongitude: 83.105,
+      halts: halts,
+      currentHaltIndex: 0,
+    );
+    expect(first.haltReached, isFalse);
+    expect(first.currentHaltIndex, 0);
+
+    final next = service.evaluate(
+      currentLatitude: 18.105,
+      currentLongitude: 83.105,
+      halts: halts,
+      currentHaltIndex: 1,
+    );
+    expect(next.haltReached, isTrue);
+    expect(next.currentHaltIndex, 2);
+
+    final complete = service.evaluate(
+      currentLatitude: 18.105,
+      currentLongitude: 83.105,
+      halts: halts,
+      currentHaltIndex: next.currentHaltIndex,
+    );
+    expect(complete.haltReached, isFalse);
+    expect(complete.currentHaltIndex, 2);
+  });
+
+  test('geofence safely ignores invalid halt coordinates', () {
+    final result = const HaltGeofenceService().evaluate(
+      currentLatitude: 18.105,
+      currentLongitude: 83.105,
+      halts: [HaltPoint(name: 'Unknown', latitude: null, longitude: null)],
+      currentHaltIndex: null,
+    );
+
+    expect(result.haltReached, isFalse);
+    expect(result.currentHaltIndex, 0);
   });
 
   test('returns no route when destination appears before source', () {
