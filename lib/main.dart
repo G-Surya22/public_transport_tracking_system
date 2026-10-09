@@ -14,9 +14,7 @@ const paleBlue = Color(0xFFEAF7FD);
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   runApp(const PttsApp());
 }
@@ -159,9 +157,9 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const SearchScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const SearchScreen()));
   }
 
   @override
@@ -173,10 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
         automaticallyImplyLeading: false,
         title: const Text(
           'Crew Login',
-          style: TextStyle(
-            color: navyBlue,
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(color: navyBlue, fontWeight: FontWeight.w800),
         ),
         actions: [
           Padding(
@@ -350,9 +345,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             password: _passwordController.text.trim(),
           );
 
-      await userCredential.user?.updateDisplayName(
-        _nameController.text.trim(),
-      );
+      await userCredential.user?.updateDisplayName(_nameController.text.trim());
 
       if (!mounted) return;
 
@@ -368,7 +361,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.message ?? 'Registration failed. Please try again.'),
+          content: Text(
+            error.message ?? 'Registration failed. Please try again.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -395,10 +390,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         elevation: 0,
         title: const Text(
           'Create Crew Account',
-          style: TextStyle(
-            color: navyBlue,
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(color: navyBlue, fontWeight: FontWeight.w800),
         ),
         iconTheme: const IconThemeData(color: navyBlue),
       ),
@@ -610,6 +602,54 @@ class RouteHalt extends HaltPoint {
   });
 }
 
+class ActiveJourney {
+  final String journeyId;
+  final String routeId;
+  final String busNumber;
+  final Map<String, dynamic> currentLocation;
+  final int currentHaltIndex;
+
+  const ActiveJourney({
+    required this.journeyId,
+    required this.routeId,
+    required this.busNumber,
+    required this.currentLocation,
+    required this.currentHaltIndex,
+  });
+}
+
+List<ActiveJourney> findActiveJourneys({
+  required Map<String, dynamic> journeysData,
+  required Set<String> routeIds,
+}) {
+  final journeys = <ActiveJourney>[];
+
+  journeysData.forEach((journeyId, journeyData) {
+    if (journeyData is! Map) return;
+
+    final journey = Map<String, dynamic>.from(journeyData);
+    final routeId = (journey['route_id'] ?? '').toString();
+    if (journey['status'] != 'active' || !routeIds.contains(routeId)) return;
+
+    final location = journey['current_location'] is Map
+        ? Map<String, dynamic>.from(journey['current_location'] as Map)
+        : const <String, dynamic>{};
+    final haltIndex = journey['current_halt_index'];
+
+    journeys.add(
+      ActiveJourney(
+        journeyId: journeyId,
+        routeId: routeId,
+        busNumber: (journey['bus_number'] ?? '').toString(),
+        currentLocation: location,
+        currentHaltIndex: haltIndex is num ? haltIndex.toInt() : 0,
+      ),
+    );
+  });
+
+  return journeys;
+}
+
 List<String> endpointSuggestionsFromRoutes({
   required Map<String, dynamic> routesData,
   required bool source,
@@ -618,6 +658,7 @@ List<String> endpointSuggestionsFromRoutes({
 
   for (final routeData in routesData.values) {
     if (routeData is! Map) continue;
+
     final endpoint = (routeData[source ? 'source' : 'destination'] ?? '')
         .toString()
         .trim();
@@ -625,6 +666,31 @@ List<String> endpointSuggestionsFromRoutes({
   }
 
   return endpoints.toList()..sort();
+}
+
+List<String> locationSuggestionsFromRoutes({
+  required Map<String, dynamic> routesData,
+}) {
+  final locations = <String>{};
+
+  for (final routeData in routesData.values) {
+    if (routeData is! Map) continue;
+
+    for (final key in const ['source', 'destination']) {
+      final endpoint = (routeData[key] ?? '').toString().trim();
+      if (endpoint.isNotEmpty) locations.add(endpoint);
+    }
+
+    final halts = routeData['halts'];
+    if (halts is! Map) continue;
+    for (final haltData in halts.values) {
+      if (haltData is! Map) continue;
+      final haltName = (haltData['name'] ?? '').toString().trim();
+      if (haltName.isNotEmpty) locations.add(haltName);
+    }
+  }
+
+  return locations.toList()..sort();
 }
 
 int? _haltIndexFromKey(String key) {
@@ -686,29 +752,22 @@ List<RouteMatch> findMatchingRoutes({
 
     if (halts.isEmpty) return;
 
-    final routeSource = (routeData['source'] ?? '').toString().trim();
-    final routeDestination = (routeData['destination'] ?? '').toString().trim();
-    final normalizedHaltNames = halts.map((halt) => halt.name.toLowerCase()).toList();
-    final sourceIndex = routeSource.isEmpty
-        ? normalizedHaltNames.indexOf(sourceKey)
-        : normalizedHaltNames.indexOf(routeSource.toLowerCase());
-    final destinationIndex = routeDestination.isEmpty
-        ? normalizedHaltNames.indexOf(destinationKey)
-        : normalizedHaltNames.indexOf(routeDestination.toLowerCase());
+    final normalizedHaltNames = halts
+        .map((halt) => halt.name.toLowerCase())
+        .toList();
+    final sourceIndex = normalizedHaltNames.indexOf(sourceKey);
+    final destinationIndex = normalizedHaltNames.indexOf(destinationKey);
 
     final sameRoute = sourceIndex != -1 && destinationIndex != -1;
-    final requestedEndpointsMatch = routeSource.isEmpty ||
-        (routeSource.toLowerCase() == sourceKey &&
-            routeDestination.toLowerCase() == destinationKey);
-    final validOrder = sameRoute && sourceIndex < destinationIndex && requestedEndpointsMatch;
+    final validOrder = sameRoute && sourceIndex < destinationIndex;
 
     if (validOrder) {
       matches.add(
         RouteMatch(
           routeId: routeName,
           routeName: (routeData['name'] ?? routeName).toString(),
-          source: routeSource.isEmpty ? normalizedSource : routeSource,
-          destination: routeDestination.isEmpty ? normalizedDestination : routeDestination,
+          source: normalizedSource,
+          destination: normalizedDestination,
           halts: halts.sublist(sourceIndex, destinationIndex + 1),
         ),
       );
@@ -723,7 +782,7 @@ double? _asNullableDouble(dynamic value) {
   return double.tryParse(value?.toString() ?? '');
 }
 
-class SearchResultScreen extends StatelessWidget {
+class SearchResultScreen extends StatefulWidget {
   final String source;
   final String destination;
   final List<RouteMatch> matches;
@@ -736,6 +795,44 @@ class SearchResultScreen extends StatelessWidget {
   });
 
   @override
+  State<SearchResultScreen> createState() => _SearchResultScreenState();
+}
+
+class _SearchResultScreenState extends State<SearchResultScreen> {
+  List<ActiveJourney> _activeJourneys = const [];
+  bool _isLoadingJourneys = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadActiveJourneys();
+  }
+
+  Future<void> _loadActiveJourneys() async {
+    try {
+      final snapshot = await FirebaseDatabase.instance
+          .ref('active_journeys')
+          .get();
+      final rawData = snapshot.value;
+      final journeysData = rawData is Map
+          ? Map<String, dynamic>.from(rawData)
+          : const <String, dynamic>{};
+      final journeys = findActiveJourneys(
+        journeysData: journeysData,
+        routeIds: widget.matches.map((match) => match.routeId).toSet(),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _activeJourneys = journeys;
+        _isLoadingJourneys = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingJourneys = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -743,14 +840,11 @@ class SearchResultScreen extends StatelessWidget {
         elevation: 0,
         title: const Text(
           'Search results',
-          style: TextStyle(
-            color: navyBlue,
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(color: navyBlue, fontWeight: FontWeight.w800),
         ),
         iconTheme: const IconThemeData(color: navyBlue),
       ),
-      body: matches.isEmpty
+      body: widget.matches.isEmpty
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -773,7 +867,7 @@ class SearchResultScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'No route contains $source before $destination.',
+                      'No route contains ${widget.source} before ${widget.destination}.',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Color(0xFF617887),
@@ -786,10 +880,13 @@ class SearchResultScreen extends StatelessWidget {
             )
           : ListView.separated(
               padding: const EdgeInsets.all(20),
-              itemCount: matches.length,
+              itemCount: widget.matches.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
-                final match = matches[index];
+                final match = widget.matches[index];
+                final activeJourneys = _activeJourneys
+                    .where((journey) => journey.routeId == match.routeId)
+                    .toList();
                 return Card(
                   elevation: 0,
                   color: Colors.white,
@@ -832,7 +929,7 @@ class SearchResultScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          '$source → $destination',
+                          '${widget.source} → ${widget.destination}',
                           style: const TextStyle(
                             color: navyBlue,
                             fontSize: 22,
@@ -857,6 +954,113 @@ class SearchResultScreen extends StatelessWidget {
                               )
                               .toList(),
                         ),
+                        const SizedBox(height: 16),
+                        const Divider(height: 1),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.directions_bus_rounded,
+                              color: skyBlue,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Active buses',
+                              style: TextStyle(
+                                color: navyBlue,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (_isLoadingJourneys)
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: skyBlue,
+                                ),
+                              ),
+                          ],
+                        ),
+                        if (!_isLoadingJourneys && activeJourneys.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 10),
+                            child: Text(
+                              'No active buses on this route.',
+                              style: TextStyle(color: Color(0xFF617887)),
+                            ),
+                          ),
+                        ...activeJourneys.map(
+                          (journey) => Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7FBFD),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => PassengerJourneyScreen(
+                                        journeyId: journey.journeyId,
+                                        route: match,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.directions_bus,
+                                            color: navyBlue,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              'Bus ${journey.busNumber.isEmpty ? 'Unknown' : journey.busNumber}',
+                                              style: const TextStyle(
+                                                color: navyBlue,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                          Text(
+                                            'Halt ${journey.currentHaltIndex + 1}/${match.halts.length}',
+                                            style: const TextStyle(
+                                              color: Color(0xFF617887),
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Live location: ${_numberText(journey.currentLocation['latitude'])}, ${_numberText(journey.currentLocation['longitude'])}',
+                                        style: const TextStyle(
+                                          color: Color(0xFF617887),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -864,6 +1068,200 @@ class SearchResultScreen extends StatelessWidget {
               },
             ),
     );
+  }
+
+  String _numberText(dynamic value) =>
+      value is num ? value.toStringAsFixed(6) : '--';
+}
+
+class PassengerJourneyScreen extends StatefulWidget {
+  final String journeyId;
+  final RouteMatch route;
+
+  const PassengerJourneyScreen({
+    super.key,
+    required this.journeyId,
+    required this.route,
+  });
+
+  @override
+  State<PassengerJourneyScreen> createState() => _PassengerJourneyScreenState();
+}
+
+class _PassengerJourneyScreenState extends State<PassengerJourneyScreen> {
+  StreamSubscription<DatabaseEvent>? _journeySubscription;
+  Map<String, dynamic>? _journey;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToJourney();
+  }
+
+  void _listenToJourney() {
+    final journeyRef = FirebaseDatabase.instance.ref(
+      'active_journeys/${widget.journeyId}',
+    );
+    _journeySubscription = journeyRef.onValue.listen((event) {
+      final value = event.snapshot.value;
+      if (!mounted) return;
+
+      setState(() {
+        _journey = value is Map ? Map<String, dynamic>.from(value) : null;
+        _isLoading = false;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _journeySubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final journey = _journey;
+    final location = journey?['current_location'] is Map
+        ? Map<String, dynamic>.from(journey!['current_location'] as Map)
+        : const <String, dynamic>{};
+    final currentHaltIndex =
+        (journey?['current_halt_index'] as num?)?.toInt() ?? 0;
+    final isActive = journey?['status'] == 'active';
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF7FBFD),
+        elevation: 0,
+        title: const Text(
+          'Live bus status',
+          style: TextStyle(color: navyBlue, fontWeight: FontWeight.w800),
+        ),
+        iconTheme: const IconThemeData(color: navyBlue),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: skyBlue))
+          : journey == null
+          ? const Center(
+              child: Text(
+                'This journey is no longer available.',
+                style: TextStyle(color: Color(0xFF617887)),
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 600),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: navyBlue,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isActive
+                                  ? 'ACTIVE NOW'
+                                  : 'JOURNEY ${journey['status']}'
+                                        .toUpperCase(),
+                              style: const TextStyle(
+                                color: skyBlue,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              '${widget.route.source} to ${widget.route.destination}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 25,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Bus ${journey['bus_number']}  |  Route ${journey['route_id']}',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            Text(
+                              'GPS ${_numberText(location['latitude'])}, ${_numberText(location['longitude'])}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              'Updated ${_timeText(location['timestamp'])}',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Journey progress',
+                        style: TextStyle(
+                          color: navyBlue,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...widget.route.halts.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final halt = entry.value;
+                        final reached = index <= currentHaltIndex;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            reached
+                                ? Icons.check_circle
+                                : Icons.radio_button_unchecked,
+                            color: reached ? skyBlue : const Color(0xFF9AB1BC),
+                          ),
+                          title: Text(
+                            halt.name,
+                            style: TextStyle(
+                              color: reached
+                                  ? navyBlue
+                                  : const Color(0xFF617887),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          subtitle: Text('${halt.latitude}, ${halt.longitude}'),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+
+  String _numberText(dynamic value) =>
+      value is num ? value.toStringAsFixed(6) : '--';
+
+  String _timeText(dynamic value) {
+    if (value is! num) return 'waiting';
+    final time = DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
   }
 }
 
@@ -878,6 +1276,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final _formKey = GlobalKey<FormState>();
   final _sourceController = TextEditingController();
   final _destinationController = TextEditingController();
+  List<String> _locationSuggestions = const [];
   bool _isCrewMode = false;
   StreamSubscription<User?>? _authSubscription;
 
@@ -885,9 +1284,12 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _syncCrewMode();
+    _loadLocationSuggestions();
 
     if (Firebase.apps.isNotEmpty) {
-      _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      _authSubscription = FirebaseAuth.instance.authStateChanges().listen((
+        user,
+      ) {
         if (!mounted) return;
         setState(() => _isCrewMode = user != null);
 
@@ -904,11 +1306,30 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  Future<void> _loadLocationSuggestions() async {
+    if (Firebase.apps.isEmpty) return;
+
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref('routes').get();
+      final rawData = snapshot.value;
+      if (rawData is! Map || !mounted) return;
+
+      setState(() {
+        _locationSuggestions = locationSuggestionsFromRoutes(
+          routesData: Map<String, dynamic>.from(rawData),
+        );
+      });
+    } catch (_) {
+      // Search still accepts manually entered locations if suggestions fail.
+    }
+  }
+
   void _syncCrewMode() {
     if (!mounted) return;
 
     final hasFirebaseApp = Firebase.apps.isNotEmpty;
-    final isLoggedIn = hasFirebaseApp && FirebaseAuth.instance.currentUser != null;
+    final isLoggedIn =
+        hasFirebaseApp && FirebaseAuth.instance.currentUser != null;
     setState(() => _isCrewMode = isLoggedIn);
   }
 
@@ -919,7 +1340,8 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     final hasFirebaseApp = Firebase.apps.isNotEmpty;
-    final isLoggedIn = hasFirebaseApp && FirebaseAuth.instance.currentUser != null;
+    final isLoggedIn =
+        hasFirebaseApp && FirebaseAuth.instance.currentUser != null;
 
     if (isLoggedIn) {
       setState(() => _isCrewMode = true);
@@ -954,17 +1376,20 @@ class _SearchScreenState extends State<SearchScreen> {
     FocusScope.of(context).unfocus();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          'Searching routes from $source to $destination',
-        ),
+        content: Text('Searching routes from $source to $destination'),
         backgroundColor: navyBlue,
       ),
     );
 
     try {
-      final snapshot = await FirebaseDatabase.instance.ref().child('routes').get();
+      final snapshot = await FirebaseDatabase.instance
+          .ref()
+          .child('routes')
+          .get();
       final rawData = snapshot.value;
-      final routesData = rawData is Map ? Map<String, dynamic>.from(rawData) : const <String, dynamic>{};
+      final routesData = rawData is Map
+          ? Map<String, dynamic>.from(rawData)
+          : const <String, dynamic>{};
       final matches = findMatchingRoutes(
         source: source,
         destination: destination,
@@ -997,6 +1422,80 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       );
     }
+  }
+
+  Widget _buildPassengerLocationField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required String emptyMessage,
+    required TextInputAction textInputAction,
+    ValueChanged<String>? onSubmitted,
+  }) {
+    return RawAutocomplete<String>(
+      optionsBuilder: (textEditingValue) {
+        final query = textEditingValue.text.trim().toLowerCase();
+        if (query.isEmpty) return const Iterable<String>.empty();
+        return _locationSuggestions.where(
+          (suggestion) => suggestion.toLowerCase().contains(query),
+        );
+      },
+      onSelected: (selection) {
+        controller.value = TextEditingValue(
+          text: selection,
+          selection: TextSelection.collapsed(offset: selection.length),
+        );
+      },
+      fieldViewBuilder:
+          (context, fieldController, fieldFocusNode, autocompleteSubmitted) {
+            return TextFormField(
+              controller: fieldController,
+              focusNode: fieldFocusNode,
+              textInputAction: textInputAction,
+              onChanged: (value) => controller.text = value,
+              onFieldSubmitted: (value) {
+                autocompleteSubmitted();
+                onSubmitted?.call(value);
+              },
+              decoration: InputDecoration(
+                labelText: label,
+                prefixIcon: Icon(icon, color: skyBlue),
+              ),
+              validator: (value) =>
+                  value == null || value.trim().isEmpty ? emptyMessage : null,
+            );
+          },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 6,
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.white,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                shrinkWrap: true,
+                itemCount: options.length,
+                itemBuilder: (context, index) {
+                  final option = options.elementAt(index);
+                  return ListTile(
+                    dense: true,
+                    leading: const Icon(
+                      Icons.location_on_outlined,
+                      color: skyBlue,
+                    ),
+                    title: Text(option),
+                    onTap: () => onSelected(option),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -1034,7 +1533,9 @@ class _SearchScreenState extends State<SearchScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  _isCrewMode ? 'Switch to passenger mode' : 'Switch to crew mode',
+                  _isCrewMode
+                      ? 'Switch to passenger mode'
+                      : 'Switch to crew mode',
                   style: const TextStyle(
                     color: navyBlue,
                     fontSize: 12.5,
@@ -1096,37 +1597,21 @@ class _SearchScreenState extends State<SearchScreen> {
                             ),
                           ),
                           const SizedBox(height: 34),
-                          TextFormField(
+                          _buildPassengerLocationField(
                             controller: _sourceController,
+                            label: 'Source location',
+                            icon: Icons.trip_origin,
+                            emptyMessage: 'Enter your starting location',
                             textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'Source location',
-                              prefixIcon: Icon(
-                                Icons.trip_origin,
-                                color: skyBlue,
-                              ),
-                            ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Enter your starting location'
-                                : null,
                           ),
                           const SizedBox(height: 16),
-                          TextFormField(
+                          _buildPassengerLocationField(
                             controller: _destinationController,
+                            label: 'Destination location',
+                            icon: Icons.location_on,
+                            emptyMessage: 'Enter your destination',
                             textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) => _search(),
-                            decoration: const InputDecoration(
-                              labelText: 'Destination location',
-                              prefixIcon: Icon(
-                                Icons.location_on,
-                                color: skyBlue,
-                              ),
-                            ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Enter your destination'
-                                : null,
+                            onSubmitted: (_) => _search(),
                           ),
                           const SizedBox(height: 26),
                           SizedBox(
@@ -1307,9 +1792,7 @@ class _CrewScreenState extends State<CrewScreen> {
 
   Future<Position> _currentPosition() {
     return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
   }
 
@@ -1322,7 +1805,9 @@ class _CrewScreenState extends State<CrewScreen> {
       final position = await _currentPosition();
       final now = DateTime.now().millisecondsSinceEpoch;
       final route = _selectedRoute!;
-      final journeyRef = FirebaseDatabase.instance.ref('active_journeys').push();
+      final journeyRef = FirebaseDatabase.instance
+          .ref('active_journeys')
+          .push();
       await journeyRef.set({
         'crew_id': FirebaseAuth.instance.currentUser?.uid,
         'bus_number': _busNumberController.text.trim(),
@@ -1361,7 +1846,8 @@ class _CrewScreenState extends State<CrewScreen> {
       _listenToJourney(journeyRef);
       _startLocationUpdates();
     } catch (error) {
-      if (mounted) _showMessage('Could not start the journey. Please try again.');
+      if (mounted)
+        _showMessage('Could not start the journey. Please try again.');
     } finally {
       if (mounted) setState(() => _isStarting = false);
     }
@@ -1377,7 +1863,10 @@ class _CrewScreenState extends State<CrewScreen> {
       setState(() {
         _activeJourney = journey;
         if (haltIndex is num) {
-          _currentHaltIndex = haltIndex.toInt().clamp(0, _selectedRoute?.halts.length ?? 0);
+          _currentHaltIndex = haltIndex.toInt().clamp(
+            0,
+            _selectedRoute?.halts.length ?? 0,
+          );
         }
       });
     });
@@ -1400,7 +1889,9 @@ class _CrewScreenState extends State<CrewScreen> {
           currentHaltIndex: _currentHaltIndex,
         );
         _currentHaltIndex = geofenceResult.currentHaltIndex;
-        final journeyRef = FirebaseDatabase.instance.ref('active_journeys/$journeyId');
+        final journeyRef = FirebaseDatabase.instance.ref(
+          'active_journeys/$journeyId',
+        );
         await journeyRef.update({
           'current_location': {
             'latitude': position.latitude,
@@ -1469,15 +1960,16 @@ class _CrewScreenState extends State<CrewScreen> {
       });
       _showMessage('Journey aborted.');
     } catch (_) {
-      if (mounted) _showMessage('Could not stop the journey. Please try again.');
+      if (mounted)
+        _showMessage('Could not stop the journey. Please try again.');
     }
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: navyBlue),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message), backgroundColor: navyBlue));
   }
 
   @override
@@ -1492,7 +1984,8 @@ class _CrewScreenState extends State<CrewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final crewName = FirebaseAuth.instance.currentUser?.displayName ?? 'Crew Member';
+    final crewName =
+        FirebaseAuth.instance.currentUser?.displayName ?? 'Crew Member';
 
     return PopScope(
       canPop: false,
@@ -1507,7 +2000,10 @@ class _CrewScreenState extends State<CrewScreen> {
           automaticallyImplyLeading: false,
           title: Text(
             _activeJourney == null ? 'Crew Dashboard' : 'Live Journey',
-            style: const TextStyle(color: navyBlue, fontWeight: FontWeight.w800),
+            style: const TextStyle(
+              color: navyBlue,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           actions: [
             TextButton.icon(
@@ -1538,9 +2034,19 @@ class _CrewScreenState extends State<CrewScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Welcome, $crewName', style: const TextStyle(color: navyBlue, fontSize: 28, fontWeight: FontWeight.w800)),
+                Text(
+                  'Welcome, $crewName',
+                  style: const TextStyle(
+                    color: navyBlue,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                const Text('Initialize a trip for passengers to track.', style: TextStyle(color: Color(0xFF617887), fontSize: 15)),
+                const Text(
+                  'Initialize a trip for passengers to track.',
+                  style: TextStyle(color: Color(0xFF617887), fontSize: 15),
+                ),
                 const SizedBox(height: 28),
                 _buildLocationField(
                   controller: _sourceController,
@@ -1561,12 +2067,25 @@ class _CrewScreenState extends State<CrewScreen> {
                 FilledButton.icon(
                   onPressed: _isSearching ? null : _findRoutes,
                   icon: const Icon(Icons.route_rounded),
-                  label: Text(_isSearching ? 'Loading routes...' : 'Find routes'),
-                  style: FilledButton.styleFrom(backgroundColor: navyBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)),
+                  label: Text(
+                    _isSearching ? 'Loading routes...' : 'Find routes',
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: navyBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
                 ),
                 if (_routes.isNotEmpty) ...[
                   const SizedBox(height: 26),
-                  const Text('Select the route', style: TextStyle(color: navyBlue, fontSize: 20, fontWeight: FontWeight.w800)),
+                  const Text(
+                    'Select the route',
+                    style: TextStyle(
+                      color: navyBlue,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   ..._routes.map(_routeCard),
                   if (_selectedRoute != null) ...[
@@ -1577,7 +2096,8 @@ class _CrewScreenState extends State<CrewScreen> {
                         labelText: 'Bus number',
                         prefixIcon: Icon(Icons.directions_bus, color: skyBlue),
                       ),
-                      validator: (value) => value == null || value.trim().isEmpty
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
                           ? 'Enter the bus number'
                           : null,
                     ),
@@ -1586,8 +2106,14 @@ class _CrewScreenState extends State<CrewScreen> {
                   FilledButton.icon(
                     onPressed: _isStarting ? null : _startJourney,
                     icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text(_isStarting ? 'Starting journey...' : 'Start journey'),
-                    style: FilledButton.styleFrom(backgroundColor: skyBlue, foregroundColor: navyBlue, padding: const EdgeInsets.symmetric(vertical: 16)),
+                    label: Text(
+                      _isStarting ? 'Starting journey...' : 'Start journey',
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: skyBlue,
+                      foregroundColor: navyBlue,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
                   ),
                 ],
               ],
@@ -1619,20 +2145,20 @@ class _CrewScreenState extends State<CrewScreen> {
           selection: TextSelection.collapsed(offset: selection.length),
         );
       },
-      fieldViewBuilder: (context, fieldController, fieldFocusNode, onFieldSubmitted) {
-        return TextFormField(
-          controller: fieldController,
-          focusNode: fieldFocusNode,
-          onChanged: (value) => controller.text = value,
-          decoration: InputDecoration(
-            labelText: label,
-            prefixIcon: Icon(icon, color: skyBlue),
-          ),
-          validator: (value) => value == null || value.trim().isEmpty
-              ? emptyMessage
-              : null,
-        );
-      },
+      fieldViewBuilder:
+          (context, fieldController, fieldFocusNode, onFieldSubmitted) {
+            return TextFormField(
+              controller: fieldController,
+              focusNode: fieldFocusNode,
+              onChanged: (value) => controller.text = value,
+              decoration: InputDecoration(
+                labelText: label,
+                prefixIcon: Icon(icon, color: skyBlue),
+              ),
+              validator: (value) =>
+                  value == null || value.trim().isEmpty ? emptyMessage : null,
+            );
+          },
       optionsViewBuilder: (context, onSelected, options) {
         return Align(
           alignment: Alignment.topLeft,
@@ -1650,7 +2176,10 @@ class _CrewScreenState extends State<CrewScreen> {
                   final option = options.elementAt(index);
                   return ListTile(
                     dense: true,
-                    leading: const Icon(Icons.location_on_outlined, color: skyBlue),
+                    leading: const Icon(
+                      Icons.location_on_outlined,
+                      color: skyBlue,
+                    ),
                     title: Text(option),
                     onTap: () => onSelected(option),
                   );
@@ -1668,22 +2197,62 @@ class _CrewScreenState extends State<CrewScreen> {
     return Card(
       elevation: 0,
       color: isSelected ? paleBlue : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: isSelected ? skyBlue : const Color(0xFFDCEAF2), width: isSelected ? 2 : 1)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: isSelected ? skyBlue : const Color(0xFFDCEAF2),
+          width: isSelected ? 2 : 1,
+        ),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: () => setState(() => _selectedRoute = route),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(child: Text(route.routeId, style: const TextStyle(color: navyBlue, fontSize: 18, fontWeight: FontWeight.w800))),
-              Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_off, color: isSelected ? skyBlue : const Color(0xFF8BA7B5)),
-            ]),
-            const SizedBox(height: 4),
-            Text('${route.source} to ${route.destination}', style: const TextStyle(color: Color(0xFF617887))),
-            const SizedBox(height: 12),
-            Wrap(spacing: 6, runSpacing: 6, children: route.halts.map((halt) => Chip(label: Text(halt.name), backgroundColor: Colors.white, side: BorderSide.none)).toList()),
-          ]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      route.routeId,
+                      style: const TextStyle(
+                        color: navyBlue,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    isSelected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: isSelected ? skyBlue : const Color(0xFF8BA7B5),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${route.source} to ${route.destination}',
+                style: const TextStyle(color: Color(0xFF617887)),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: route.halts
+                    .map(
+                      (halt) => Chip(
+                        label: Text(halt.name),
+                        backgroundColor: Colors.white,
+                        side: BorderSide.none,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1692,8 +2261,11 @@ class _CrewScreenState extends State<CrewScreen> {
   Widget _buildLiveJourney() {
     final journey = _activeJourney!;
     final route = _selectedRoute;
-    final location = journey['current_location'] is Map ? Map<String, dynamic>.from(journey['current_location'] as Map) : const <String, dynamic>{};
-    final currentHaltIndex = (journey['current_halt_index'] as num?)?.toInt() ?? 0;
+    final location = journey['current_location'] is Map
+        ? Map<String, dynamic>.from(journey['current_location'] as Map)
+        : const <String, dynamic>{};
+    final currentHaltIndex =
+        (journey['current_halt_index'] as num?)?.toInt() ?? 0;
     final halts = route?.halts ?? const <RouteHalt>[];
 
     return SingleChildScrollView(
@@ -1701,55 +2273,117 @@ class _CrewScreenState extends State<CrewScreen> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 600),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: navyBlue, borderRadius: BorderRadius.circular(20)),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('ACTIVE NOW', style: TextStyle(color: skyBlue, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-                const SizedBox(height: 10),
-                Text('${journey['source']} to ${journey['destination']}', style: const TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                Text('Bus ${journey['bus_number']}  |  Route ${journey['route_id']}', style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                const SizedBox(height: 18),
-                Text('GPS ${_numberText(location['latitude'])}, ${_numberText(location['longitude'])}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                Text('Updated ${_timeText(location['timestamp'])}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-              ]),
-            ),
-            const SizedBox(height: 24),
-            const Text('Journey progress', style: TextStyle(color: navyBlue, fontSize: 21, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 12),
-            ...halts.asMap().entries.map((entry) {
-              final index = entry.key;
-              final halt = entry.value;
-              final reached = index <= currentHaltIndex;
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(reached ? Icons.check_circle : Icons.radio_button_unchecked, color: reached ? skyBlue : const Color(0xFF9AB1BC)),
-                title: Text(halt.name, style: TextStyle(color: reached ? navyBlue : const Color(0xFF617887), fontWeight: FontWeight.w700)),
-                subtitle: Text('${halt.latitude}, ${halt.longitude}'),
-              );
-            }),
-            const SizedBox(height: 10),
-            const Text('Location is refreshed every 12 seconds while this screen is open.', style: TextStyle(color: Color(0xFF617887), fontSize: 13)),
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: _stopJourney,
-              icon: const Icon(Icons.stop_circle_outlined),
-              label: const Text('Stop journey'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red,
-                side: const BorderSide(color: Colors.red),
-                padding: const EdgeInsets.symmetric(vertical: 15),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: navyBlue,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'ACTIVE NOW',
+                      style: TextStyle(
+                        color: skyBlue,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '${journey['source']} to ${journey['destination']}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 25,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Bus ${journey['bus_number']}  |  Route ${journey['route_id']}',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'GPS ${_numberText(location['latitude'])}, ${_numberText(location['longitude'])}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Updated ${_timeText(location['timestamp'])}',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ]),
+              const SizedBox(height: 24),
+              const Text(
+                'Journey progress',
+                style: TextStyle(
+                  color: navyBlue,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...halts.asMap().entries.map((entry) {
+                final index = entry.key;
+                final halt = entry.value;
+                final reached = index <= currentHaltIndex;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    reached ? Icons.check_circle : Icons.radio_button_unchecked,
+                    color: reached ? skyBlue : const Color(0xFF9AB1BC),
+                  ),
+                  title: Text(
+                    halt.name,
+                    style: TextStyle(
+                      color: reached ? navyBlue : const Color(0xFF617887),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text('${halt.latitude}, ${halt.longitude}'),
+                );
+              }),
+              const SizedBox(height: 10),
+              const Text(
+                'Location is refreshed every 12 seconds while this screen is open.',
+                style: TextStyle(color: Color(0xFF617887), fontSize: 13),
+              ),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                onPressed: _stopJourney,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('Stop journey'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.red),
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  String _numberText(dynamic value) => value is num ? value.toStringAsFixed(6) : '--';
+  String _numberText(dynamic value) =>
+      value is num ? value.toStringAsFixed(6) : '--';
 
   String _timeText(dynamic value) {
     if (value is! num) return 'waiting';
